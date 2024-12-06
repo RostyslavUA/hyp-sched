@@ -291,3 +291,18 @@ def get_hyperedges(V_H, S, N, I, theta=0.5, k=4):
                 break
         hyperedges.append(hyperedge)
     return hyperedges
+
+
+def get_data(num_samples, V_H, N=0.1, theta=0.5, k=4):
+    itens = []  # interference tensor
+    hlist = []  # list of hyperedges
+    for _ in range(num_samples):
+        # Signal strengths and interference matrix
+        I = np.random.rand(V_H, V_H)  # Interference matrix (I_ij)
+        S = np.diag(I)        
+        # Hyperedges (list of node indices per hyperedge)
+        hyperedges = get_hyperedges(V_H, S, N, I, theta, k)
+        itens.append(I)
+        hlist.append(hyperedges)
+    itens = np.array(itens)
+    return itens, hlist
