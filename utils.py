@@ -306,3 +306,15 @@ def get_data(num_samples, V_H, N=0.1, theta=0.5, k=4):
         hlist.append(hyperedges)
     itens = np.array(itens)
     return itens, hlist
+
+
+def get_H(hlist_train, V_H, train_samples):
+    H = np.zeros((V_H*train_samples, V_H), dtype=np.float64)  # [hedge, hnode]
+    for hypg_idx, hypg in enumerate(hlist_train):
+        for hypedge_idx, hypedge in enumerate(hypg):
+            e_idx = hypg_idx*len(hypg) + hypedge_idx
+            for hypnode in hypedge:
+                H[e_idx, hypnode] = 1
+    H = H.reshape(train_samples, V_H, V_H)
+    H = H.transpose(0, 2, 1)  # [batch, hnode, hedge]
+    return H
