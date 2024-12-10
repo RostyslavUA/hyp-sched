@@ -13,26 +13,29 @@ class CustomLoss(nn.Module):
     def __init__(self):
         super(CustomLoss, self).__init__()
 
-    def forward(self, zs, X, var_noise):
+    def forward(self, zs, X, var_noise, gamma=0.0):
         loss = 0
         numerator = zs*torch.diag(X)
         X_bar = X - torch.diag(torch.diag(X))
         Xz = X_bar @ zs
         denumerator = var_noise + Xz
-        u = torch.sum(numerator/denumerator)
-        loss = -u
-        # for i in range(len(zs)):
-            # z = zs[i]
-            # import pdb; pdb.set_trace()
-            # all_info = torch.einsum('j,ij->ij', z, X)
-            # numerators = torch.diag(all_info)
-            # denumerators = torch.sum(all_info, dim=1) - numerators
-            
-            # loss += -torch.sum(numerators/(var_noise + denumerators))
-        return loss, u #/ len(zs)
+        sinr = numerator/denumerator
+        u = torch.sum(sinr)
+        loss = -u  + gamma*torch.linalg.norm(sinr, ord=1)
+        return loss, u
+
+
+def utility_fn(zs, X, var_noise):
+    zs = torch.round(zs)
+    numerator = zs*torch.diag(X)
+    X_bar = X - torch.diag(torch.diag(X))
+    Xz = X_bar @ zs
+    denumerator = var_noise + Xz
+    u = torch.sum(numerator/denumerator)
+    return u
     
 
-def train(HyperGCN, dataset, epochs):
+def train(HyperGCN, dataset, epochs, batch_size=10):
     """
     train for a certain number of epochs
 
@@ -51,27 +54,38 @@ def train(HyperGCN, dataset, epochs):
 
     loss_fn = CustomLoss()
     
-    X, H = dataset['I'], dataset["H"]
+    # X, H = dataset['I'], dataset["H"]
+    itens, hlist = dataset['I'], dataset['H']
 
-    RHS_const = H.T.sum(dim=1) - 1
-    LHS_const = H.T
+    # RHS_const = H.T.sum(dim=1) - 1
+    # LHS_const = H.T
     utility = []
     for epoch in tqdm(range(epochs)):
+        loss_batch, u_batch = [], []
+        i = 0
         optimiser.zero_grad()
-        Z = hypergcn(X)  # tilde
-
-        # constrained_output = utils.gumbel_linsat_layer(Z, LHS_const, RHS_const)  # Zs
-
-        # print(torch.mean(constrained_output, dim=0))  # Z = Z_mean
-
-        # loss = loss_fn(constrained_output, X, 0.01)
-        print(Z)
-        loss, u = loss_fn(Z, X, 0.1)
-        utility.append(u)
-        loss.backward()
-        optimiser.step()
+        for X, H in zip(itens, hlist):
+            Z = hypergcn(X)  # tilde
+    
+            # constrained_output = utils.gumbel_linsat_layer(Z, LHS_const, RHS_const)  # Zs
+    
+            # print(torch.mean(constrained_output, dim=0))  # Z = Z_mean
+    
+            # loss = loss_fn(constrained_output, X, 0.01)
+            loss, u = loss_fn(Z, X, 0.1)
+            loss_batch.append(loss)
+            u_batch.append(u)
+            if i < batch_size:
+                i+=1
+                continue
+            i = 0
+            np.mean(loss_batch).backward()
+            optimiser.step()
+            optimiser.zero_grad()
+            utility.append(np.mean(u_batch))
+            loss_batch, u_batch = [], []
         
-        # print loss per epoch
+        # print utility per epoch
         print("Epoch: {0}, Utility: {1}".format(epoch, u))
 
 
