@@ -4,6 +4,7 @@ import torch.nn as nn, torch.nn.functional as F, torch.nn.init as init
 from torch.autograd import Variable
 from torch.nn.modules.module import Module
 from torch.nn.parameter import Parameter
+from datagen import generate_data
 
 
 
@@ -297,8 +298,9 @@ def get_data(num_samples, V_H, N=0.1, theta=0.5, k=4):
     hlist = []  # list of hyperedges
     for _ in range(num_samples):
         # Signal strengths and interference matrix
-        I = np.random.rand(V_H, V_H)  # Interference matrix (I_ij)
-        S = np.diag(I)        
+        # I = np.random.rand(V_H, V_H)  # Interference matrix (I_ij)
+        I = generate_data(tr_iter=1, te_iter=0, batch_size=1, layout='circle', xy_lim=500, alpha=1/np.sqrt(2), nNodes=V_H, threshold=False, fading=False)['train_H'][0][0]
+        S = np.diag(I)     
         # Hyperedges (list of node indices per hyperedge)
         hyperedges = get_hyperedges(V_H, S, N, I, theta, k)
         itens.append(I)
