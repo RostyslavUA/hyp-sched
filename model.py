@@ -18,6 +18,7 @@ class CustomLossBatch(nn.Module):
         numerators = all_info.diagonal(dim1=1, dim2=2)  
         denominators = torch.sum(all_info, dim=2) - numerators
         fraction = numerators / (var_noise + denominators)
+        fraction = torch.log2(1+fraction)
         utility = torch.sum(fraction, dim=1) 
         loss = -torch.sum(utility) + gamma*torch.sum(torch.linalg.norm(fraction, ord=1, dim=1))
 
@@ -46,6 +47,7 @@ def utility_fn(zs, X, var_noise):
     numerators = all_info.diagonal(dim1=1, dim2=2)  
     denominators = torch.sum(all_info, dim=2) - numerators
     fraction = numerators / (var_noise + denominators)
+    fraction = torch.log2(1+fraction)
     utility = torch.sum(fraction) 
     return utility
     
