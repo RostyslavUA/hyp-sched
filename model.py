@@ -9,6 +9,21 @@ import schedulefree
 
 
 
+class CustomLossBatch(nn.Module):
+    def __init__(self):
+        super(CustomLossBatch, self).__init__()
+
+    def forward(self, zs, X, var_noise, gamma=0.0):
+        all_info = zs.unsqueeze(1) * X
+        numerators = all_info.diagonal(dim1=1, dim2=2)  
+        denominators = torch.sum(all_info, dim=2) - numerators
+        fraction = numerators / (var_noise + denominators)
+        utility = torch.sum(fraction, dim=1) 
+        loss = -torch.sum(utility) + gamma*torch.sum(torch.linalg.norm(fraction, ord=1, dim=1))
+
+        return loss, torch.sum(utility)
+        
+
 class CustomLoss(nn.Module):
     def __init__(self):
         super(CustomLoss, self).__init__()
@@ -27,12 +42,12 @@ class CustomLoss(nn.Module):
 
 def utility_fn(zs, X, var_noise):
     zs = torch.round(zs)
-    numerator = zs*torch.diag(X)
-    X_bar = X - torch.diag(torch.diag(X))
-    Xz = X_bar @ zs
-    denumerator = var_noise + Xz
-    u = torch.sum(numerator/denumerator)
-    return u
+    all_info = zs.unsqueeze(1) * X
+    numerators = all_info.diagonal(dim1=1, dim2=2)  
+    denominators = torch.sum(all_info, dim=2) - numerators
+    fraction = numerators / (var_noise + denominators)
+    utility = torch.sum(fraction) 
+    return utility
     
 
 def train(HyperGCN, dataset, epochs, batch_size=10):
