@@ -317,3 +317,14 @@ def get_H(hlist_train, V_H, train_samples):
     H = H.reshape(train_samples, V_H, V_H)
     H = H.transpose(0, 2, 1)  # [batch, hnode, hedge]
     return H
+
+    
+def check_feasibility(H, z):
+    """
+    Feasibility for hyperedge constraint
+    """
+    RHS_const = H.transpose(2, 1).sum(dim=2) - 1
+    LHS_const = H.transpose(2, 1)
+    is_sat = (LHS_const @ torch.round(z).unsqueeze(-1)).squeeze(-1) <= RHS_const
+    feasibility = (torch.sum(is_sat)/is_sat.numel()).item()
+    return feasibility
