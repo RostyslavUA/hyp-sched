@@ -5,6 +5,7 @@ from torch.autograd import Variable
 from torch.nn.modules.module import Module
 from torch.nn.parameter import Parameter
 from datagen import generate_data
+from linsat import linsat_layer_modified
 
 
 
@@ -257,18 +258,12 @@ def gumbel_linsat_layer(scores, A, b,
 
     s_rep = s_rep + gumbel_noise
 
-    #u = torch.rand(len(scores))
-    #a = (u < scores).float()
-    #s_rep = a + (scores - scores.detach())
-    #s_rep = s_rep.unsqueeze(0)
-    
 
+    outputs = torch.zeros_like(s_rep)
+    for i in range(sample_num):
+        outputs[i] = linsat_layer_modified(s_rep[i].float(), A=A, b=b, tau=tau, max_iter=max_iter, dummy_val=0, no_warning=False, grouped=False).double()
 
-
-
-    output = linsat_layer(s_rep, A=A, b=b, tau=0.01, max_iter=400, dummy_val=0)
-
-    return output
+    return outputs
 
 
 def get_hyperedges(V_H, S, N, I, theta=0.5, k=4):

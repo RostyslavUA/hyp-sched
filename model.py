@@ -6,6 +6,9 @@ from torch.autograd import Variable
 from tqdm import tqdm
 import utils
 import schedulefree
+from linsat import linsat_layer_modified
+from utils import check_feasibility, gumbel_linsat_layer
+
 
 
 
@@ -52,108 +55,205 @@ def utility_fn(zs, X, var_noise):
     return utility
     
 
-def train(HyperGCN, dataset, epochs, batch_size=10):
-    """
-    train for a certain number of epochs
+def train_handler(model, hgnn_weights, hgnn_batchnorm, loss_fn, optimizer, train_loader, test_loader, epochs, model_name, tau_linsat, iter_linsat, gumbel_flag, gumble_samples, N, device):
 
-    arguments:
-	HyperGCN: a dictionary containing model details (gcn, optimiser)
-	dataset: the entire dataset
-	epochs: number of training epochs
+    train_utility, test_utility = [], []
+    loss_train, loss_test = [], []
+    batch_size = train_loader.batch_size
 
-	returns:
-	the trained model
-    """    
-    
-    hypergcn, optimiser = HyperGCN['model'], HyperGCN['optimiser']
-    hypergcn.train()
-    optimiser.train()
+    ################### Evaluation without training ###################
+    if model_name == "HGNN":
+            hgnn_batchnorm = [b.eval()  for b in hgnn_batchnorm]  # Set batch norm in training mode
+    else:
+        # MLP
+        model.eval()
 
-    loss_fn = CustomLoss()
-    
-    # X, H = dataset['I'], dataset["H"]
-    itens, hlist = dataset['I'], dataset['H']
+    with torch.no_grad():
+        ####### on Train data #######
+        utility_epoch = []
+        loss_train_epoch = []
+        for (X, Dv_inv, De_inv, H, W) in train_loader:
+            X, H, W = X.to(device), H.to(device), W.to(device)
+            Dv_inv, De_inv = Dv_inv.to(device), De_inv.to(device)
+            if model_name == "HGNN":
+                z = model(X, Dv_inv, De_inv, H, W, hgnn_weights, hgnn_batchnorm)
+            else:
+                # MLP
+                V_H = X.shape[2]
+                z = model(X.view(-1, V_H*V_H))
 
-    # RHS_const = H.T.sum(dim=1) - 1
-    # LHS_const = H.T
-    utility = []
-    for epoch in tqdm(range(epochs)):
-        loss_batch, u_batch = [], []
-        i = 0
-        optimiser.zero_grad()
-        for X, H in zip(itens, hlist):
-            Z = hypergcn(X)  # tilde
+            # Linsat
+            RHS_const = H.transpose(2, 1).sum(dim=2) - 1
+            LHS_const = H.transpose(2, 1)
+            if gumbel_flag == False:
+                z = linsat_layer_modified(z.float(), A=LHS_const.float(), b=RHS_const.float(), tau=tau_linsat, max_iter=iter_linsat, dummy_val=0, no_warning=False, grouped=False).double()
+                loss = loss_fn(z, X, N, gamma=0.0)[0]
+                utility = utility_fn(z, X, N)  # utility based on discrete values of z
+            else:
+                z = gumbel_linsat_layer(z, A=LHS_const.float(), b=RHS_const.float(), tau=tau_linsat, max_iter=iter_linsat, noise_fact=1., sample_num=gumble_samples)
+                loss = 0
+                for i in range(gumble_samples):
+                    loss += loss_fn(z[i], X, N, gamma=0.0)[0]
+                loss /= gumble_samples
+
+                utility = 0
+                for i in range(gumble_samples):
+                    utility += utility_fn(z[i], X, N)
+                utility /= gumble_samples
+
+            utility_epoch.append(utility.item()/batch_size)
+            loss_train_epoch.append(loss.item()/batch_size)
+        utility_epoch_mean = np.mean(utility_epoch)
+        train_utility.append(utility_epoch_mean)
+        loss_train.append(np.mean(loss_train_epoch))
+        print(f"Initial utility per hypergraph in Training: {train_utility[-1]}")
+
+        ####### on Test data #######
+        utility_epoch_test = []
+        loss_test_epoch = []
+        for (X, Dv_inv, De_inv, H, W) in test_loader:
+            X, H, W = X.to(device), H.to(device), W.to(device)
+            Dv_inv, De_inv = Dv_inv.to(device), De_inv.to(device)
+            if model_name == "HGNN":
+                z = model(X, Dv_inv, De_inv, H, W, hgnn_weights, hgnn_batchnorm)
+            else:
+                # MLP
+                V_H = X.shape[2]
+                z = model(X.view(-1, V_H*V_H))
+
+            # Linsat 
+            RHS_const = H.transpose(2, 1).sum(dim=2) - 1
+            LHS_const = H.transpose(2, 1)
+            if gumbel_flag == False:
+                z = linsat_layer_modified(z.float(), A=LHS_const.float(), b=RHS_const.float(), tau=tau_linsat, max_iter=iter_linsat, dummy_val=0, no_warning=False, grouped=False).double()
+                loss = loss_fn(z, X, N, gamma=0.0)[0]
+                utility = utility_fn(z, X, N)  # utility based on discrete values of z
+            else:
+                z = gumbel_linsat_layer(z, A=LHS_const.float(), b=RHS_const.float(), tau=tau_linsat, max_iter=iter_linsat, noise_fact=1., sample_num=gumble_samples)
+                loss = 0
+                for i in range(gumble_samples):
+                    loss += loss_fn(z[i], X, N, gamma=0.0)[0]
+                loss /= gumble_samples
+
+                utility = 0
+                for i in range(gumble_samples):
+                    utility += utility_fn(z[i], X, N)
+                utility /= gumble_samples
+            utility_epoch_test.append(utility.item()/batch_size)
+            loss_test_epoch.append(loss.item()/batch_size)
+        utility_epoch_test_mean = np.mean(utility_epoch_test)
+        test_utility.append(utility_epoch_test_mean)
+        loss_test.append(np.mean(loss_test_epoch))
+        print(f"Initial utility per hypergraph in Testing: {test_utility[-1]}")
     
-            # constrained_output = utils.gumbel_linsat_layer(Z, LHS_const, RHS_const)  # Zs
-    
-            # print(torch.mean(constrained_output, dim=0))  # Z = Z_mean
-    
-            # loss = loss_fn(constrained_output, X, 0.01)
-            loss, u = loss_fn(Z, X, 0.1)
-            loss_batch.append(loss)
-            u_batch.append(u)
-            if i < batch_size:
-                i+=1
-                continue
-            i = 0
-            np.mean(loss_batch).backward()
-            optimiser.step()
-            optimiser.zero_grad()
-            utility.append(np.mean(u_batch))
-            loss_batch, u_batch = [], []
+
+
+
+    ################### Traing loop ###################
+    optimizer.zero_grad()
+    for epoch in range(epochs):
+        # Train Phase
+        if model_name == "HGNN":
+            hgnn_batchnorm = [b.train() for b in hgnn_batchnorm]  # Set batch norm in training mode
+        else:
+            # MLP
+            model.train()
+        loss_epoch, utility_epoch, feasibility_epoch = [], [], []
+        for (X, Dv_inv, De_inv, H, W) in train_loader:
+            X, H, W = X.to(device), H.to(device), W.to(device)
+            Dv_inv, De_inv = Dv_inv.to(device), De_inv.to(device)
+
+            if model_name == "HGNN":
+                z = model(X, Dv_inv, De_inv, H, W, hgnn_weights, hgnn_batchnorm)
+            else:
+                # MLP
+                V_H = X.shape[2]
+                z = model(X.view(-1, V_H*V_H))
+            # Linsat
+            RHS_const = H.transpose(2, 1).sum(dim=2) - 1
+            LHS_const = H.transpose(2, 1)
+            if gumbel_flag == False:
+                z = linsat_layer_modified(z.float(), A=LHS_const.float(), b=RHS_const.float(), tau=tau_linsat, max_iter=iter_linsat, dummy_val=0, no_warning=False, grouped=False).double()
+                loss = loss_fn(z, X, N, gamma=0.0)[0]
+                utility = utility_fn(z, X, N)  # utility based on discrete values of z
+            else:
+                z = gumbel_linsat_layer(z, A=LHS_const.float(), b=RHS_const.float(), tau=tau_linsat, max_iter=iter_linsat, noise_fact=1., sample_num=gumble_samples)
+                loss = 0
+                for i in range(gumble_samples):
+                    loss += loss_fn(z[i], X, N, gamma=0.0)[0]
+                loss /= gumble_samples
+
+                utility = 0
+                for i in range(gumble_samples):
+                    utility += utility_fn(z[i], X, N)
+                utility /= gumble_samples
+
+            feasibility = check_feasibility(H, z)
+            utility_epoch.append(utility.item()/batch_size)
+            feasibility_epoch.append(feasibility)
+            loss.backward()
+            # print(torch.linalg.matrix_norm(theta_HGNN[0].grad))
+            optimizer.step()
+            optimizer.zero_grad()
+            loss_epoch.append(loss.item()/batch_size)
+        # Test Phase
+        if model_name == "HGNN":
+            hgnn_batchnorm = [b.eval()  for b in hgnn_batchnorm]  # Set batch norm in training mode
+        else:
+            # MLP
+            model.eval()
+        loss_epoch_test, utility_epoch_test, feasibility_epoch_test = [], [], []
+        with torch.no_grad():
+            for (X, Dv_inv, De_inv, H, W) in test_loader:
+                X, H, W = X.to(device), H.to(device), W.to(device)
+                Dv_inv, De_inv = Dv_inv.to(device), De_inv.to(device)
+                
+                if model_name == "HGNN":
+                    z = model(X, Dv_inv, De_inv, H, W, hgnn_weights, hgnn_batchnorm)
+                else:
+                    # MLP
+                    V_H = X.shape[2]
+                    z = model(X.view(-1, V_H*V_H))
+
+                # Linsat 
+                RHS_const = H.transpose(2, 1).sum(dim=2) - 1
+                LHS_const = H.transpose(2, 1)
+                if gumbel_flag == False:
+                    z = linsat_layer_modified(z.float(), A=LHS_const.float(), b=RHS_const.float(), tau=tau_linsat, max_iter=iter_linsat, dummy_val=0, no_warning=False, grouped=False).double()
+                    loss = loss_fn(z, X, N, gamma=0.0)[0]
+                    utility = utility_fn(z, X, N)  # utility based on discrete values of z
+                else:
+                    z = gumbel_linsat_layer(z, A=LHS_const.float(), b=RHS_const.float(), tau=tau_linsat, max_iter=iter_linsat, noise_fact=1., sample_num=gumble_samples)
+                    loss = 0
+                    for i in range(gumble_samples):
+                        loss += loss_fn(z[i], X, N, gamma=0.0)[0]
+                    loss /= gumble_samples
+
+                    utility = 0
+                    for i in range(gumble_samples):
+                        utility += utility_fn(z[i], X, N)
+                    utility /= gumble_samples
+                feasibility = check_feasibility(H, z)
+                utility_epoch_test.append(utility.item()/batch_size)
+                feasibility_epoch_test.append(feasibility)
+                loss_epoch_test.append(loss.item()/batch_size)
+        utility_epoch_mean = np.mean(utility_epoch)
+        utility_epoch_test_mean = np.mean(utility_epoch_test)
+        feasibility_epoch_mean = np.mean(feasibility_epoch)
+        feasibility_epoch_test_mean = np.mean(feasibility_epoch_test)
+        loss_epoch_mean = np.mean(loss_epoch)
+        loss_test_mean = np.mean(loss_epoch_test)
         
-        # print utility per epoch
-        print("Epoch: {0}, Utility: {1}".format(epoch, u))
+        if epoch % 1 == 0:
+            print(f"Epoch: {epoch}, Loss:{np.mean(loss_epoch):.5f} | Train Utility: {utility_epoch_mean:.5f}, Feasibility: {feasibility_epoch_mean:.2f}" \
+            f" | Test Utility: {utility_epoch_test_mean:.5f}, Feasibility: {feasibility_epoch_test_mean:.2f}")
+        train_utility.append(utility_epoch_mean)
+        test_utility.append(utility_epoch_test_mean)
+        loss_train.append(loss_epoch_mean)
+        loss_test.append(loss_test_mean)
+    print(f"Final utility per hypergraph: {utility_epoch_test}")
 
+    return train_utility, test_utility, loss_train, loss_test
 
-    HyperGCN['model'] = hypergcn
-    HyperGCN['utility'] = utility
-    return HyperGCN
-
-
-
-
-def initialise(dataset):
-    """
-    initialises GCN, optimiser, and features, and set GPU 
-    
-    arguments:
-    dataset: the entire dataset (with graph, features, labels as keys)
-    
-    returns:
-    a dictionary with model details (hypergcn, optimiser)    
-    """
-    
-    HyperGCN = {}
-    V, E = dataset['n'], dataset['E']
-    X = dataset['I']
-
-    # hypergcn and optimiser
-    d = X.shape[1]
-    c = V
-    hypergcn = networks.HyperGCN(V, E, X, d, c, False, False)
-    #optimiser = optim.Adam(hypergcn.parameters(), lr=0.0001)
-    optimiser = schedulefree.AdamWScheduleFree(hypergcn.parameters(), lr=0.01)
-
-
-    # node features in sparse representation
-    X = sp.csr_matrix(np.array(X), dtype=np.float32)
-    X = torch.FloatTensor(np.array(X.todense()))
-    
-
-
-    # cuda
-    Cuda = torch.cuda.is_available()
-    if Cuda:
-        hypergcn.cuda()
-        X = X.cuda()
-
-    # update dataset with torch autograd variable
-    dataset['I'] = Variable(X)
-
-    # update model and optimiser
-    HyperGCN['model'] = hypergcn
-    HyperGCN['optimiser'] = optimiser
-    return HyperGCN
 
 
