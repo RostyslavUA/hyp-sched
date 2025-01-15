@@ -266,7 +266,7 @@ def gumbel_linsat_layer(scores, A, b,
     return outputs
 
 
-def get_hyperedges(V_H, S, N, I, theta=0.5, k=4):
+def get_hyperedges(V_H, S, N, I, theta=0.5):
     """
     (4) in thet paper Maximal Scheduling in Wireless Ad Hoc Networks With Hypergraph Interference Models
     """
@@ -280,15 +280,14 @@ def get_hyperedges(V_H, S, N, I, theta=0.5, k=4):
             theta_hat = S[i]/(N+cumulative_intf+I[i, j])
             if theta_hat > theta:
                 cumulative_intf += I[i, j]
-                if len(hyperedge) == k:
-                    break
             else:
-                break
-        hyperedges.append(hyperedge)
+                hyperedges.append(hyperedge)
+                hyperedge = [i]
+                cumulative_intf = 0
     return hyperedges
 
 
-def get_data(num_samples, V_H, N=0.1, xy_lim=500, theta=0.5, k=4):
+def get_data(num_samples, V_H, N=0.1, xy_lim=500, theta=0.5):
     itens = []  # interference tensor
     hlist = []  # list of hyperedges
     for _ in range(num_samples):
@@ -298,7 +297,7 @@ def get_data(num_samples, V_H, N=0.1, xy_lim=500, theta=0.5, k=4):
         I = I.T  # [receiver, transmitter]
         S = np.diag(I)     
         # Hyperedges (list of node indices per hyperedge)
-        hyperedges = get_hyperedges(V_H, S, N, I, theta, k)
+        hyperedges = get_hyperedges(V_H, S, N, I, theta)
         itens.append(I)
         hlist.append(hyperedges)
     itens = np.array(itens)
