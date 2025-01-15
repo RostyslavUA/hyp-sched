@@ -278,7 +278,7 @@ def get_hyperedges(V_H, S, N, I, theta=0.5, k=4):
         for j in idx_sort[i]:
             hyperedge.append(int(j))
             theta_hat = S[i]/(N+cumulative_intf+I[i, j])
-            if theta_hat < theta:
+            if theta_hat > theta:
                 cumulative_intf += I[i, j]
                 if len(hyperedge) == k:
                     break
