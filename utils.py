@@ -312,16 +312,22 @@ def get_data(num_samples, V_H, N=0.1, xy_lim=500, theta=0.5):
     return itens, hlist, locs
 
 
-def get_H(hlist_train, V_H, train_samples):
-    H = np.zeros((V_H*train_samples, V_H), dtype=np.float64)  # [hedge, hnode]
-    for hypg_idx, hypg in enumerate(hlist_train):
-        for hypedge_idx, hypedge in enumerate(hypg):
-            e_idx = hypg_idx*len(hypg) + hypedge_idx
-            for hypnode in hypedge:
-                H[e_idx, hypnode] = 1
-    H = H.reshape(train_samples, V_H, V_H)
-    H = H.transpose(0, 2, 1)  # [batch, hnode, hedge]
-    return H
+def get_H(hlist_train, train_samples):
+    hlist_train_coo = []
+    for b, hlist in enumerate(hlist_train):
+        hlist_coo = []
+        for hedge in hlist:
+            if len(hedge) == 2:
+                hlist_coo.append([b] + hedge)
+            else:
+                for i, hnode in enumerate(hedge):
+                    if i == 0:
+                        rx = hnode
+                    else:
+                        hlist_coo.append([b, rx, hnode])
+        hlist_train_coo.extend(hlist_coo)
+    hlist_train_coo = list(zip(*hlist_train_coo))
+    return hlist_train_coo
 
     
 def check_feasibility(H, z):
