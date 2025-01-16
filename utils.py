@@ -7,6 +7,11 @@ from torch.nn.parameter import Parameter
 from datagen import generate_data
 from linsat import linsat_layer_modified
 
+import matplotlib.pyplot as plt
+from matplotlib.patches import Polygon as MplPolygon
+from shapely.geometry import MultiPoint
+from matplotlib.patches import Polygon as MplPolygon
+
 
 
 class HyperGraphConvolution(Module):
@@ -290,18 +295,21 @@ def get_hyperedges(V_H, S, N, I, theta=0.5):
 def get_data(num_samples, V_H, N=0.1, xy_lim=500, theta=0.5):
     itens = []  # interference tensor
     hlist = []  # list of hyperedges
+    locs = []
     for _ in range(num_samples):
         # Signal strengths and interference matrix
         # I = np.random.rand(V_H, V_H)  # Interference matrix (I_ij)
-        I = generate_data(tr_iter=1, te_iter=0, batch_size=1, layout='circle', xy_lim=xy_lim, alpha=1/np.sqrt(2), nNodes=V_H, threshold=False, fading=False)['train_H'][0][0]
+        data_dict = generate_data(tr_iter=1, te_iter=0, batch_size=1, layout='circle', xy_lim=xy_lim, alpha=1/np.sqrt(2), nNodes=V_H, threshold=False, fading=False)
+        I = data_dict['train_H'][0][0]
         I = I.T  # [receiver, transmitter]
         S = np.diag(I)     
         # Hyperedges (list of node indices per hyperedge)
         hyperedges = get_hyperedges(V_H, S, N, I, theta)
         itens.append(I)
         hlist.append(hyperedges)
+        locs.append(data_dict['tr_locs'])
     itens = np.array(itens)
-    return itens, hlist
+    return itens, hlist, locs
 
 
 def get_H(hlist_train, V_H, train_samples):
@@ -325,3 +333,97 @@ def check_feasibility(H, z):
     is_sat = (LHS_const @ torch.round(z).unsqueeze(-1)).squeeze(-1) <= RHS_const
     feasibility = (torch.sum(is_sat)/is_sat.numel()).item()
     return feasibility
+
+def visualize_hyperedges(locs, hlist, buffer_distance, xy_lim=500):
+    
+    nNodes = locs[0].shape[0]
+    transmitters, receivers = locs
+    # Separate x and y coordinates
+    x_coords = np.concatenate([transmitters[:, 0], receivers[:, 0]])
+    y_coords = np.concatenate([transmitters[:, 1], receivers[:, 1]])
+
+    # Indices that define certain polygons
+    index_lists = hlist
+
+    # Define the limits you want for x and y
+    x_min, x_max = -xy_lim-10, xy_lim+10
+    y_min, y_max = -xy_lim-10, xy_lim+10
+
+    # ---------------------------------------------------------
+    # 3) Create a figure
+    # ---------------------------------------------------------
+    fig, ax = plt.subplots(figsize=(10, 10))
+
+    # ---------------------------------------------------------
+    # 4) Scatter-plot all points (optional visualization)
+    # ---------------------------------------------------------
+    ax.scatter(x_coords[:nNodes], y_coords[:nNodes], color='blue', s=100, zorder=3, alpha=0.6)
+    ax.scatter(x_coords[nNodes:], y_coords[nNodes:], color='red', s=100, zorder=3, alpha=0.6)
+
+    # plot black line between each transmitter and receiver
+    for i in range(nNodes):
+        ax.plot([transmitters[i, 0], receivers[i, 0]], [transmitters[i, 1], receivers[i, 1]], color='black', zorder=1)
+        
+    # Label each point with its index
+    for i, (x, y) in enumerate(zip(x_coords, y_coords)):
+        ax.text(x, y, str(i), color='white', ha='center', va='center', zorder=4)
+
+    # ---------------------------------------------------------
+    # 5) For each subset, build a rounded polygon using:
+    #    MultiPoint -> convex_hull -> buffer(...)
+    # ---------------------------------------------------------
+    colors = ["red", "green", "orange", "purple", "cyan"]
+    buffer_resolution = 10     # higher -> smoother circles around corners
+
+    # plot a circle with radius xy_lim
+    circle = plt.Circle((0, 0), xy_lim, color='black', fill=False, zorder=0)
+    ax.add_artist(circle)
+
+    for idx, node_list in enumerate(index_lists):
+        # Extract the (x, y) coords for this subset
+        subset_points = [(x_coords[i], y_coords[i]) for i in node_list]
+
+        # Build a MultiPoint
+        mp = MultiPoint(subset_points)
+        
+        # Compute the convex hull
+        hull = mp.convex_hull  # Shapely polygon or multipolygon
+
+        # Buffer the hull to get a rounded shape
+        shape = hull.buffer(buffer_distance, resolution=buffer_resolution)
+
+        # shape might be Polygon, MultiPolygon, or possibly something else
+        if shape.geom_type == "Polygon":
+            polygons = [shape]
+        elif shape.geom_type == "MultiPolygon":
+            polygons = list(shape)
+        else:
+            polygons = []
+
+        # Choose a color from our list
+        color = colors[idx % len(colors)]
+        
+        # Plot each polygon
+        for poly in polygons:
+            exterior_xy = list(poly.exterior.coords)
+            patch = MplPolygon(
+                exterior_xy,
+                closed=True,
+                facecolor='none',
+                edgecolor=color,
+                alpha=0.8,
+                linewidth=1.5,
+                zorder=2
+            )
+            ax.add_patch(patch)
+        
+
+    # ---------------------------------------------------------
+    # 6) Final plot settings
+    # ---------------------------------------------------------
+    ax.set_xlim(x_min, x_max)
+    ax.set_ylim(y_min, y_max)
+    ax.set_aspect('equal', 'box')
+    ax.set_title("Hypergraph visualization")
+
+    plt.show()

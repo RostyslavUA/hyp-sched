@@ -138,14 +138,15 @@ def generate_data(tr_iter, te_iter, batch_size, layout, xy_lim, alpha, nNodes, t
     }
     tr_H, te_H = [], []
     thr_gain_lin = gen_threshold()
+    tr_transmitters, tr_receivers = [], []
     for indx in range(tr_iter):
         # sample training data
         if layout == 'circle':
-            transmitters, receivers = gen_location_circle(xy_lim=xy_lim, nNodes=nNodes)
+            tr_transmitters, tr_receivers = gen_location_circle(xy_lim=xy_lim, nNodes=nNodes)
         elif layout == 'square':
-            transmitters, receivers = gen_location_square(xy_lim=xy_lim, nNodes=nNodes)
+            tr_transmitters, tr_receivers = gen_location_square(xy_lim=xy_lim, nNodes=nNodes)
         # Generate dict of coordinates, gain (linear), path loss (dB) and distance matrix
-        coord, h_mtx_lin, pl_mtx, d_mtx = build_adhoc_network((transmitters, receivers), pars, batch_size)
+        coord, h_mtx_lin, pl_mtx, d_mtx = build_adhoc_network((tr_transmitters, tr_receivers), pars, batch_size)
         if fading:
             # Apply Rayleigh fading with parameter alpha
             H = sample_graph(batch_size, h_mtx_lin, alpha)
@@ -156,14 +157,15 @@ def generate_data(tr_iter, te_iter, batch_size, layout, xy_lim, alpha, nNodes, t
             H[H < thr_gain_lin] = 0.0
         tr_H.append( H )
 
+    te_transmitters, te_receivers = [], []
     for indx in range(te_iter):
         # sample test data
         if layout == 'circle':
-            transmitters, receivers = gen_location_circle(xy_lim=xy_lim, nNodes=nNodes)
+            te_transmitters, te_receivers = gen_location_circle(xy_lim=xy_lim, nNodes=nNodes)
         elif layout == 'square':
-            transmitters, receivers = gen_location_square(xy_lim=xy_lim, nNodes=nNodes)
+            te_transmitters, te_receivers = gen_location_square(xy_lim=xy_lim, nNodes=nNodes)
         # Generate dict of coordinates, gain (linear), path loss (dB) and distance matrix
-        coord, h_mtx_lin, pl_mtx, d_mtx = build_adhoc_network((transmitters, receivers), pars, batch_size)
+        coord, h_mtx_lin, pl_mtx, d_mtx = build_adhoc_network((te_transmitters, te_receivers), pars, batch_size)
         if fading:
             # Apply Rayleigh fading with parameter alpha
             H = sample_graph(batch_size, h_mtx_lin, alpha)
@@ -174,7 +176,8 @@ def generate_data(tr_iter, te_iter, batch_size, layout, xy_lim, alpha, nNodes, t
             H[H < thr_gain_lin] = 0.0
         te_H.append( H )
 
-    return( dict(zip(['train_H', 'test_H'],[tr_H, te_H] ) ) )
+    return( dict(zip(['train_H', 'test_H', 'tr_locs', 'te_locs'],[tr_H, te_H, [tr_transmitters, tr_receivers], [te_transmitters, te_receivers]] ) ) )
+
 
 
 def gen_pl_umi_nlos(dist, fc=5.8, c=3e8, hbs=1.7, hut=1.7, gamma=3.0):
