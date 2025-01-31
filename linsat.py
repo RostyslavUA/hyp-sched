@@ -8,6 +8,69 @@ import torch
 import sys
 
 
+def linsat_layer(x, A=None, b=None, C=None, d=None, E=None, f=None, constr_dict=None, tau=0.05, max_iter=100, dummy_val=0,
+                 mode='v2', grouped=True, no_warning=False):
+    """
+    Project x with the constraints A x <= b, C x >= d, E x = f.
+    All elements in A, b, C, d, E, f must be non-negative.
+
+    :param x: (n_v), it can optionally have a batch size (b x n_v)
+    :param A, C, E: (n_c x n_v)
+    :param b, d, f: (n_c)
+    :param constr_dict: a dictionary with initialized constraint information, which is the output of the function
+        `init_constraints`. Specifying this variable could avoid re-initializing the constraints for the same
+        constraints and improve the efficiency
+    :param tau: parameter to control hard/soft constraint
+    :param max_iter: max number of iterations
+    :param dummy_val: value of dummy variable
+    :param grouped: group non-overlapping constraints in one operation for better efficiency
+    :param mode: v1 or v2
+    :param no_warning: turn off warning message
+    :return: (n_v) or (b x n_v), the projected variables
+    """
+    if len(x.shape) == 1:
+        x = x.unsqueeze(0)
+        vector_input = True
+    elif len(x.shape) == 2:
+        vector_input = False
+    else:
+        raise ValueError('input data shape not understood.')
+
+    batch_size = x.shape[0]
+    num_var = x.shape[1]
+
+    if constr_dict is None:
+#         constr_dict = init_constraints(num_var, A, b, C, d, E, f, grouped)
+        constr_dict = init_constraints(num_var, A, b, grouped)
+    if not type(constr_dict) is dict:
+        raise TypeError(f'If you specify argument constr_dict, it must be a dictionary returned by init_constraints()! '
+                        f'Got {type(constr_dict)} instead.')
+
+    param_dict = {'tau': tau, 'max_iter': max_iter, 'dummy_val': dummy_val, 'batch_size': batch_size,
+                  'num_var': num_var, 'no_warning': no_warning}
+    param_dict.update(constr_dict)
+
+    is_sparse = param_dict.pop('is_sparse')
+
+    if grouped and is_sparse and mode == 'v2':
+        kernel = linsat_kernel_grouped_sparse_v2
+    elif grouped and not is_sparse and mode == 'v2':
+        kernel = linsat_kernel_grouped_dense_v2
+    elif not grouped and not is_sparse and mode == 'v1':
+        kernel = linsat_kernel_v1
+    elif not grouped and not is_sparse and mode == 'v2':
+        kernel = linsat_kernel_v2
+    else:
+        raise NotImplementedError(f'mode={mode}, grouped={grouped}, is_sparse={is_sparse}')
+
+    x = kernel(x, **param_dict)
+
+    if vector_input:
+        x = x.squeeze(0)
+    return x
+
+
+
 def linsat_layer_modified(x, A=None, b=None, constr_dict=None, tau=0.05, max_iter=100, dummy_val=0,
                  mode='v2', grouped=True, no_warning=False):
     """
