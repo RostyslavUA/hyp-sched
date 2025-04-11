@@ -14,7 +14,7 @@ from scipy.spatial import distance_matrix
 np.random.seed(0)
 
 # Eperiment
-dataID = sys.argv[1]
+dataID = 0
 
 # Number of nodes
 nNodes = 25

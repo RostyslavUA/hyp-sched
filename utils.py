@@ -9,9 +9,61 @@ from linsat import linsat_layer_modified
 
 import matplotlib.pyplot as plt
 from matplotlib.patches import Polygon as MplPolygon
-from shapely.geometry import MultiPoint
+# from shapely.geometry import MultiPoint
 from matplotlib.patches import Polygon as MplPolygon
+from torch.utils.data import Dataset
 
+
+def create_sparse_tensor(hyperedges, V_H):
+    row_indices = []
+    col_indices = []
+    values = []
+
+    for i, hyperedge in enumerate(hyperedges):
+        for node in hyperedge:
+            row_indices.append(i)  # Hyperedge index
+            col_indices.append(node)  # Node index
+            values.append(1)  # Assuming all values are 1
+
+    # Convert to tensors
+    indices = torch.tensor([row_indices, col_indices], dtype=torch.long)
+    values = torch.tensor(values, dtype=torch.float32)
+    shape = (len(hyperedges), V_H)  # Determine shape
+
+    return torch.sparse_coo_tensor(indices, values, size=shape, dtype=torch.float64)
+
+
+def hypergraph_generation(V_H, I, hyperedges):
+    hypergraph = {}
+    hypergraph["I"] = torch.DoubleTensor(I)
+    H = create_sparse_tensor(hyperedges, V_H)
+    Dv_inv = (H.sum(0)**(-1/2)).to_dense()  # Not diagonal; We will use element-wise multiplication to save memory
+    De_inv = (H.sum(1)**(-1)).to_dense()
+    W = torch.ones(De_inv.shape, dtype=torch.float64)
+    hypergraph["H"] = H
+    hypergraph["Dv_inv"] = Dv_inv
+    hypergraph["De_inv"] = De_inv
+    hypergraph["W"] = W
+    return hypergraph
+
+
+class HyperDataset(Dataset):
+    def __init__(self, I, Dv_inv, De_inv, H, W):
+        self.I = I
+        self.Dv_inv = Dv_inv
+        self.De_inv = De_inv
+        self.H = H
+        self.W = W
+
+    def __len__(self):
+        return len(self.I)
+
+    def __getitem__(self, idx):
+        return self.I[idx], self.Dv_inv[idx], self.De_inv[idx], self.H[idx], self.W[idx]
+
+
+def custom_collate_fn(batch):
+    return batch[0]
 
 
 class HyperGraphConvolution(Module):
