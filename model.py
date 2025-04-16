@@ -3,14 +3,12 @@ import torch, os, numpy as np, scipy.sparse as sp
 import torch.optim as optim, torch.nn.functional as F
 import torch.nn as nn
 from torch.autograd import Variable
-from tqdm import tqdm
+# from tqdm import tqdm
 import utils
-import schedulefree
-from linsat import linsat_layer_modified
+# import schedulefree
+# from linsat import linsat_layer_modified
 from utils import check_feasibility, gumbel_linsat_layer
 from LinSATNet import linsat_layer
-
-
 
 
 class CustomLossBatch(nn.Module):

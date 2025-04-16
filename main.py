@@ -6,30 +6,49 @@ from LinSATNet import linsat_layer
 from networks import HGNNModel
 from model import CustomLossBatch, utility_fn
 from utils import HyperDataset, get_data, hypergraph_generation, custom_collate_fn
+from conflict_vs_hypergraph import generate_channel_matrix, build_hyperedges, build_conflict_edges
+
+
+def data_generate(train_size):
+    H_train, hedge_train = [], []
+    for _ in range(train_size):
+        # Generate a random channel matrix
+        H = generate_channel_matrix()
+
+        # Build conflict constraints:
+        # 1. Pairwise conflict edges (conflict graph)
+        conflict_edges = build_conflict_edges(H)
+        conflict_edges_list = [list(edge) for edge in conflict_edges]
+
+        # 2. Higher order hyperedges (hypergraph conflicts)
+        hyperedges = build_hyperedges(H, conflict_edges)
+        hyperedges_list = [list(edge) for edge in hyperedges]
+        H_train.append(H)
+        hedge_train.append(hyperedges_list)
+    return H_train, hedge_train
+
 
 if __name__ == '__main__':
-    num_nodes = 10  # Number of nodes (links)
-    # E_H = 5   # Number of hyperedges
-    # N = 0.1  # Noise power
-    N_db = -136.87  # dB
-    N = 10**(N_db/10)
-    theta = 10  # Thresholds for hyperedges
-    train_samples = 100
-    test_samples = 20
-    xy_lim = 2000
-    itens_train, hlist_train, locs_train = get_data(train_samples, num_nodes, N, xy_lim, theta)
-    itens_test, hlist_test, locs_test = get_data(test_samples, num_nodes, N, xy_lim, theta)
-    hyps_train, hyps_test = [], []
+    # -------------------------------
+    # Simulation parameters
+    # -------------------------------
+    N = 13                   # number of users/links
+    area_size = 100.0        # square area side length (meters)
+    path_loss_exp = 3.0      # path loss exponent
+    P = 50.0                 # transmit power in Watts
+    noise_power = 1e-8       # noise power in Watts
+    SINR_threshold = 6       # SINR threshold (linear scale, e.g., 10 ~ 10 dB)
+    train_size = 100
+    val_size = 10
 
-    Is = []
-    Dv_invs = []
-    De_invs = []
-    Hs = []
-    Ws = []
-
+    # Noise vector for all links
+    noise_vec = np.full(N, noise_power)
+    H_train, hedge_train = data_generate(train_size)
+    H_val, hedge_val = data_generate(val_size)
     i = 0
-    for I, hyperedges in zip(itens_train, hlist_train):
-        hyp = hypergraph_generation(num_nodes, I, hyperedges)
+    Is, Dv_invs, De_invs, Hs, Ws = [], [], [], [], []
+    for I, hyperedges in zip(H_train, hedge_train):
+        hyp = hypergraph_generation(N, I, hyperedges)
         Is.append(hyp["I"])
         Dv_invs.append(hyp["Dv_inv"])
         De_invs.append(hyp["De_inv"])
@@ -46,8 +65,8 @@ if __name__ == '__main__':
     Hs = []
     Ws = []
     i = 0
-    for I, hyperedges in zip(itens_test, hlist_test):
-        hyp = hypergraph_generation(num_nodes, I, hyperedges)
+    for I, hyperedges in zip(H_val, hedge_val):
+        hyp = hypergraph_generation(N, I, hyperedges)
         Is.append(hyp["I"])
         Dv_invs.append(hyp["Dv_inv"])
         De_invs.append(hyp["De_inv"])
@@ -64,7 +83,7 @@ if __name__ == '__main__':
     accumulation_steps = 20  # Number of batches to accumulate before backprop
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    model = HGNNModel(num_nodes).to(device)
+    model = HGNNModel(N).to(device)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=0.01, weight_decay=1e-5)
     # optimizer = schedulefree.AdamWScheduleFree(model.parameters(), lr=0.005, weight_decay=1e-6)
@@ -141,27 +160,6 @@ if __name__ == '__main__':
                 val_metrics = {'loss': [], 'utility': []}
 
                 with torch.no_grad():
-                    # Evaluate on training set
-                    # for (X, Dv_inv, De_inv, H, W) in train_loader:
-                    #     X = X.to(device)
-                    #     Dv_inv = Dv_inv.to(device)
-                    #     De_inv = De_inv.to(device)
-                    #     H = H.to(device)
-                    #     W = W.to(device)
-                    #
-                    #     z = model(X, Dv_inv, De_inv, H, W)
-                    #     RHS_const = H.to_dense().T.sum(dim=1) - 1
-                    #     LHS_const = H.to_dense().T
-                    #     z = z.unsqueeze(0)
-                    #     z = linsat_layer(z.float(), A=LHS_const.float(), b=RHS_const.float(),
-                    #                     tau=tau, max_iter=max_iter, dummy_val=0,
-                    #                     no_warning=False, grouped=False).double()
-                    #
-                    #     utility = utility_fn(z, X, N)
-                    #     loss = loss_fn(z, X, N, gamma=0.0)[0]
-                    #     train_metrics['loss'].append(loss.cpu().numpy())
-                    #     train_metrics['utility'].append(utility.cpu().numpy())
-
                     # Evaluate on validation set
                     for (X, Dv_inv, De_inv, H, W) in test_loader:
                         X = X.to(device)
