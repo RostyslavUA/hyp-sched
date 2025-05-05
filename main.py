@@ -4,7 +4,7 @@ import torch
 from torch import nn
 from torch.utils.data import DataLoader
 from LinSATNet import linsat_layer
-from networks import HGNNModel
+from networks import HGNNModel, HGNNModel_2layer
 from model import CustomLossBatch, utility_fn
 from utils import HyperDataset, get_data, hypergraph_generation, custom_collate_fn
 from conflict_vs_hypergraph import generate_channel_matrix, build_hyperedges, build_conflict_edges
@@ -49,7 +49,7 @@ if __name__ == '__main__':
     area_size = 100.0        # square area side length (meters)
     path_loss_exp = 3.0      # path loss exponent
     P = 50.0                 # transmit power in Watts
-    noise_power = 1e-16       # noise power in Watts
+    noise_power = 1e-8       # noise power in Watts
     SINR_threshold = 6       # SINR threshold (linear scale, e.g., 10 ~ 10 dB)
     train_size = 10000
     val_size = 100
@@ -66,10 +66,10 @@ if __name__ == '__main__':
         torch.save({'H': H_val, 'hedges': hedge_val}, 'data/val_data.pt')
         print("Datagen done")
     else:
-        data = torch.load('data/train_data.pt')
+        data = torch.load('data/train_data.pt', weights_only=False)
         H_train = data['H']
         hedge_train = data['hedges']
-        data = torch.load('data/val_data.pt')
+        data = torch.load('data/val_data.pt', weights_only=False)
         H_val = data['H']
         hedge_val = data['hedges']
     i = 0
@@ -110,7 +110,8 @@ if __name__ == '__main__':
     noise_vec = torch.from_numpy(noise_vec).to(device)
     model = HGNNModel(N).to(device)
 
-    optimizer = torch.optim.Adam(model.parameters(), lr=0.001, weight_decay=1e-5)
+    # optimizer = torch.optim.Adam(model.parameters(), lr=0.00001, xweight_decay=1e-5)
+    optimizer = torch.optim.SGD(model.parameters(), lr=0.01)
     # optimizer = schedulefree.AdamWScheduleFree(model.parameters(), lr=0.005, weight_decay=1e-6)
     # torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=0.5)
     loss_fn = CustomLossBatch()
@@ -119,7 +120,6 @@ if __name__ == '__main__':
     optimizer.zero_grad()
     accumulated_loss = 0
     accumulated_utility = 0
-    batch_counter = 0
     tau = 1
     max_iter = 1000
     batch_counter = 0
@@ -153,7 +153,7 @@ if __name__ == '__main__':
             # Accumulate loss
             accumulated_loss += loss_tr
             accumulated_utility += utility_tr
-            if i % 10 == 0:
+            if i % 100 == 0 and i > 0:
                 break
 
         # Evaluate on validation set
@@ -177,16 +177,16 @@ if __name__ == '__main__':
             loss = loss_fn(z, X, noise_vec, gamma=0.0)[0]
             accumulated_utility_val += utility
             accumulated_loss_val += loss
-            if i % 10 == 0:
+            if i % 100 == 0 and i > 0:
                 break
-        accumulated_utility, accumulated_utility_val = accumulated_utility/10, accumulated_utility_val/10
-        accumulated_loss, accumulated_loss_val = accumulated_loss/10, accumulated_loss_val/10
+        accumulated_utility, accumulated_utility_val = accumulated_utility/100, accumulated_utility_val/100
+        accumulated_loss, accumulated_loss_val = accumulated_loss/100, accumulated_loss_val/100
         print(f"epoch: {0}, batch: {0}, loss_tr: {accumulated_loss:.3f}, "
-                f"loss_val: {accumulated_loss_val:.3f}, utility_tr: {accumulated_utility:.3e}, "
-                f"utility_val: {accumulated_utility_val:.3e}, z: {None}")
+                f"loss_val: {accumulated_loss_val:.3f}, utility_tr: {accumulated_utility:.3f}, "
+                f"utility_val: {accumulated_utility_val:.3f}, z: {None}")
 
     epochs = 10
-    accumulation_steps = 1  # Number of batches to accumulate before backprop
+    accumulation_steps = 64  # Number of batches to accumulate before backprop
 
     train_losses = []
     val_losses = []
@@ -196,9 +196,9 @@ if __name__ == '__main__':
         model.train()
         optimizer.zero_grad()
 
-        accumulated_loss = 0
-        accumulated_utility = 0
         batch_counter = 0
+        loss_acc = 0
+        train_metrics = {'loss': [], 'utility': []}
         for i, (X, Dv_inv, De_inv, H, W) in enumerate(train_loader):
             # Move data to device
             X = X.to(device)
@@ -222,28 +222,16 @@ if __name__ == '__main__':
             # Calculate loss and utility
             utility_tr = utility_fn(z, X, noise_vec)
             loss_tr = loss_fn(z, X, noise_vec, gamma=0.0)[0]
-
-            # Add L2 regularization
-            # l2_reg = 0.001 * sum(p.pow(2.0).sum() for p in model.parameters())
-            # loss_tr = loss_tr + l2_reg
             loss_tr.backward()
 
-
-            # Scale the loss by accumulation steps
-            # loss_tr = loss_tr / accumulation_steps
-            utility_tr = utility_tr / accumulation_steps
+            # print(list(model.parameters())[0].grad.norm().item(), X.norm().item(), z.norm().item())
 
             # Accumulate loss
-            accumulated_loss += loss_tr
-            accumulated_utility += utility_tr
+            train_metrics['loss'].append(loss_tr.detach().cpu().numpy())
+            train_metrics['utility'].append(utility_tr.detach().cpu().numpy())
 
             # Perform backpropagation after accumulating enough batches
-            if batch_counter == accumulation_steps:
-                # Backward pass
-                # accumulated_loss.backward()
-
-                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-
+            if batch_counter >= accumulation_steps:
                 # Optimizer step
                 optimizer.step()
                 optimizer.zero_grad()
@@ -278,8 +266,8 @@ if __name__ == '__main__':
                         val_metrics['utility'].append(utility.cpu().numpy())
 
                 # Calculate and store metrics
-                train_loss = accumulated_loss
-                train_utility = accumulated_utility
+                train_loss = np.mean(train_metrics['loss'])
+                train_utility = np.mean(train_metrics['utility'])
                 val_loss = np.mean(val_metrics['loss'])
                 val_utility = np.mean(val_metrics['utility'])
 
@@ -289,10 +277,8 @@ if __name__ == '__main__':
                 val_utilities.append(val_utility)
 
                 print(f"epoch: {epoch}, batch: {i}, loss_tr: {train_loss:.3f}, "
-                      f"loss_val: {val_loss:.3f}, utility_tr: {train_utility:.3e}, "
-                      f"utility_val: {val_utility:.3e}, z: {np.mean(zs)}")
-                accumulated_loss = 0
-                accumulated_utility = 0
+                      f"loss_val: {val_loss:.3f}, utility_tr: {train_utility:.3f}, "
+                      f"utility_val: {val_utility:.3f}, z: {np.mean(zs)}")
                 # Set model back to training mode
                 model.train()
             batch_counter += 1
