@@ -105,8 +105,6 @@ if __name__ == '__main__':
     train_loader = DataLoader(train_dataset, batch_size=1, shuffle=True, collate_fn=custom_collate_fn)
     test_loader = DataLoader(test_dataset, batch_size=1, shuffle=False, collate_fn=custom_collate_fn)
 
-    epochs = 10
-    accumulation_steps = 1  # Number of batches to accumulate before backprop
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     noise_vec = torch.from_numpy(noise_vec).to(device)
@@ -114,16 +112,87 @@ if __name__ == '__main__':
 
     optimizer = torch.optim.Adam(model.parameters(), lr=0.001, weight_decay=1e-5)
     # optimizer = schedulefree.AdamWScheduleFree(model.parameters(), lr=0.005, weight_decay=1e-6)
-    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=0.5)
+    # torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=0.5)
     loss_fn = CustomLossBatch()
+
+    model.eval()
+    optimizer.zero_grad()
+    accumulated_loss = 0
+    accumulated_utility = 0
+    batch_counter = 0
+    tau = 1
+    max_iter = 1000
+    batch_counter = 0
+    with torch.no_grad():
+        for i, (X, Dv_inv, De_inv, H, W) in enumerate(train_loader):
+            # Move data to device
+            X = X.to(device)
+            Dv_inv = Dv_inv.to(device)
+            De_inv = De_inv.to(device)
+            H = H.to(device)
+            W = W.to(device)
+
+            # Forward pass
+            z = model(X, Dv_inv, De_inv, H, W)
+
+            RHS_const = H.to_dense().T.sum(dim=1) - 1
+            LHS_const = H.to_dense().T
+            z = z.unsqueeze(0)
+
+            # Apply linsat layer
+            z = linsat_layer(z.float(), A=LHS_const.float(), b=RHS_const.float(),
+                            tau=tau, max_iter=max_iter, dummy_val=0,
+                            no_warning=False, grouped=False).double()
+
+            # Calculate loss and utility
+            utility_tr = utility_fn(z, X, noise_vec)
+            loss_tr = loss_fn(z, X, noise_vec, gamma=0.0)[0]
+
+            # Scale the loss by accumulation steps
+            # loss_tr = loss_tr / accumulation_steps
+            # Accumulate loss
+            accumulated_loss += loss_tr
+            accumulated_utility += utility_tr
+            if i % 10 == 0:
+                break
+
+        # Evaluate on validation set
+        accumulated_utility_val = 0
+        accumulated_loss_val = 0
+        for i, (X, Dv_inv, De_inv, H, W) in enumerate(test_loader):
+            X = X.to(device)
+            Dv_inv = Dv_inv.to(device)
+            De_inv = De_inv.to(device)
+            H = H.to(device)
+            W = W.to(device)
+
+            z = model(X, Dv_inv, De_inv, H, W)
+            RHS_const = H.to_dense().T.sum(dim=1) - 1
+            LHS_const = H.to_dense().T
+            z = z.unsqueeze(0)
+            z = linsat_layer(z.float(), A=LHS_const.float(), b=RHS_const.float(),
+                            tau=tau, max_iter=max_iter, dummy_val=0,
+                            no_warning=False, grouped=False).double()
+            utility = utility_fn(z, X, noise_vec)
+            loss = loss_fn(z, X, noise_vec, gamma=0.0)[0]
+            accumulated_utility_val += utility
+            accumulated_loss_val += loss
+            if i % 10 == 0:
+                break
+        accumulated_utility, accumulated_utility_val = accumulated_utility/10, accumulated_utility_val/10
+        accumulated_loss, accumulated_loss_val = accumulated_loss/10, accumulated_loss_val/10
+        print(f"epoch: {0}, batch: {0}, loss_tr: {accumulated_loss:.3f}, "
+                f"loss_val: {accumulated_loss_val:.3f}, utility_tr: {accumulated_utility:.3e}, "
+                f"utility_val: {accumulated_utility_val:.3e}, z: {None}")
+
+    epochs = 10
+    accumulation_steps = 1  # Number of batches to accumulate before backprop
 
     train_losses = []
     val_losses = []
     train_utilities = []
     val_utilities = []
-    tau = 1
-    max_iter = 1000
-    for epoch in range(epochs):
+    for epoch in range(1, epochs+1):
         model.train()
         optimizer.zero_grad()
 
@@ -223,6 +292,7 @@ if __name__ == '__main__':
                       f"loss_val: {val_loss:.3f}, utility_tr: {train_utility:.3e}, "
                       f"utility_val: {val_utility:.3e}, z: {np.mean(zs)}")
                 accumulated_loss = 0
+                accumulated_utility = 0
                 # Set model back to training mode
                 model.train()
             batch_counter += 1
