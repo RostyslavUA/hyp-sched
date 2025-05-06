@@ -6,7 +6,7 @@ from torch.utils.data import DataLoader
 from LinSATNet import linsat_layer
 from networks import HGNNModel, HGNNModel_2layer
 from model import CustomLossBatch, utility_fn
-from utils import HyperDataset, get_data, hypergraph_generation, custom_collate_fn
+from utils import HyperDataset, get_data, hypergraph_generation, custom_collate_fn # , exh_solver
 from conflict_vs_hypergraph import generate_channel_matrix, build_hyperedges, build_conflict_edges
 
 
@@ -81,7 +81,6 @@ if __name__ == '__main__':
         De_invs.append(hyp["De_inv"])
         Hs.append(hyp["H"].T)
         Ws.append(hyp["W"])
-
         i += 1
     Is = torch.stack(Is)
     train_dataset = HyperDataset(Is, Dv_invs, De_invs, Hs, Ws)
@@ -92,6 +91,7 @@ if __name__ == '__main__':
     Hs = []
     Ws = []
     i = 0
+    # optimals = []
     for I, hyperedges in zip(H_val, hedge_val):
         hyp = hypergraph_generation(N, I, hyperedges)
         Is.append(hyp["I"])
@@ -99,7 +99,11 @@ if __name__ == '__main__':
         De_invs.append(hyp["De_inv"])
         Hs.append(hyp["H"].T)
         Ws.append(hyp["W"])
+        # optimal = exh_solver(N, None, [noise_power]*N, hyp["I"].detach().cpu().numpy(), hyp["H"].detach().cpu().to_dense().numpy().T)[0]
+        # optimals.append(optimal)
         i += 1
+    # print(f"Optimal values: {np.mean(optimals)}")
+
     Is = torch.stack(Is)
     test_dataset = HyperDataset(Is, Dv_invs, De_invs, Hs, Ws)
     train_loader = DataLoader(train_dataset, batch_size=1, shuffle=True, collate_fn=custom_collate_fn)
@@ -110,8 +114,8 @@ if __name__ == '__main__':
     noise_vec = torch.from_numpy(noise_vec).to(device)
     model = HGNNModel(N).to(device)
 
-    # optimizer = torch.optim.Adam(model.parameters(), lr=0.00001, xweight_decay=1e-5)
-    optimizer = torch.optim.SGD(model.parameters(), lr=0.01)
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.01, weight_decay=1e-5)
+    # optimizer = torch.optim.SGD(model.parameters(), lr=0.01)
     # optimizer = schedulefree.AdamWScheduleFree(model.parameters(), lr=0.005, weight_decay=1e-6)
     # torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=0.5)
     loss_fn = CustomLossBatch()
@@ -192,6 +196,7 @@ if __name__ == '__main__':
     val_losses = []
     train_utilities = []
     val_utilities = []
+    best_utility = 0
     for epoch in range(1, epochs+1):
         model.train()
         optimizer.zero_grad()
@@ -270,6 +275,11 @@ if __name__ == '__main__':
                 train_utility = np.mean(train_metrics['utility'])
                 val_loss = np.mean(val_metrics['loss'])
                 val_utility = np.mean(val_metrics['utility'])
+
+                if val_utility > best_utility:
+                    best_utility = val_utility
+                    torch.save(model.state_dict(), 'model/best_model.pth')
+
 
                 train_losses.append(train_loss)
                 val_losses.append(val_loss)

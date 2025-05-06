@@ -14,6 +14,39 @@ from matplotlib.patches import Polygon as MplPolygon
 from torch.utils.data import Dataset
 
 
+# exhaustive search
+def exh_solver(V_H, E_H, N, I, hyperedges):
+    hyperedges = hyperedges.T
+    best_throughput = 0
+    best_schedule = None
+    for i in range(2**V_H):
+        schedule = np.array([int(x) for x in bin(i)[2:].zfill(V_H)])  # Numpy is faster than torch
+        throughput = 0
+        # check if the schedule satisfies the hyperedge constraints
+        valid_schedule = True
+        for hyperedge in hyperedges:
+            non_zero_idx = np.nonzero(hyperedge)[0]
+            is_not_trivial = len(non_zero_idx) > 1
+            if sum(schedule[non_zero_idx]) == len(non_zero_idx) and is_not_trivial:
+                valid_schedule = False
+                break
+        
+        if not valid_schedule:
+            continue
+        # calculate throughput
+        for i in range(V_H):
+            interference = sum(schedule[j] * I[i, j] for j in range(V_H) if j != i)
+            denominator = N[i] + interference
+            throughput += np.log2(1+(I[i,i] * schedule[i]) / denominator)
+        # print(schedule, throughput)
+        if throughput > best_throughput:
+            best_throughput = throughput
+            best_schedule = schedule
+
+    return best_throughput, best_schedule
+        
+
+
 def create_sparse_tensor(hyperedges, V_H):
     row_indices = []
     col_indices = []
