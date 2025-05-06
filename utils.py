@@ -15,7 +15,7 @@ from torch.utils.data import Dataset
 
 
 # exhaustive search
-def exh_solver(V_H, E_H, N, I, hyperedges):
+def exh_solver(V_H, N, I, hyperedges):
     hyperedges = hyperedges.T
     best_throughput = 0
     best_schedule = None

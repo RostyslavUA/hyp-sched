@@ -6,9 +6,9 @@ from torch.utils.data import DataLoader
 from LinSATNet import linsat_layer
 from networks import HGNNModel, HGNNModel_2layer
 from model import CustomLossBatch, utility_fn
-from utils import HyperDataset, get_data, hypergraph_generation, custom_collate_fn # , exh_solver
+from utils import HyperDataset, get_data, hypergraph_generation, custom_collate_fn, exh_solver
 from conflict_vs_hypergraph import generate_channel_matrix, build_hyperedges, build_conflict_edges
-
+import matplotlib.pyplot as plt
 
 seed = 42
 random.seed(seed)
@@ -39,6 +39,9 @@ def data_generate(train_size):
         if i % 100 == 0:
             print(i)
     return H_train, hedge_train
+
+
+
 
 
 if __name__ == '__main__':
@@ -189,15 +192,40 @@ if __name__ == '__main__':
                 f"loss_val: {accumulated_loss_val:.3f}, utility_tr: {accumulated_utility:.3f}, "
                 f"utility_val: {accumulated_utility_val:.3f}, z: {None}")
 
-    epochs = 10
+
+    # Baseline: Exhaustive Search
+    best_throughput_test = []
+    for i, sample in enumerate(test_dataset):
+        X, _, _, H, _ = sample
+        best_throughput, best_schedule = exh_solver(X.shape[1], X.shape[1]*[noise_power], X.detach().to_dense().numpy(), H.detach().to_dense().numpy())
+        best_throughput_test.append(best_throughput)
+        print("Optimal link schedule ", best_schedule, " Maximum throughput:", best_throughput, "bits/s/Hz")
+    tput_optimal_mean = np.mean(best_throughput_test)
+    print(f"Mean average throughput: {tput_optimal_mean}")
+    epochs = 5
     accumulation_steps = 64  # Number of batches to accumulate before backprop
 
     train_losses = []
     val_losses = []
     train_utilities = []
     val_utilities = []
+
+    train_losses_epoch = []
+    val_losses_epoch = []
+    train_utilities_epoch = []
+    val_utilities_epoch = []
+    train_losses_epoch.append(accumulated_loss)
+    val_losses_epoch.append(accumulated_loss_val)
+    train_utilities_epoch.append(accumulated_utility)
+    val_utilities_epoch.append(accumulated_utility_val)
+
+    
     best_utility = 0
     for epoch in range(1, epochs+1):
+        train_losses = []
+        val_losses = []
+        train_utilities = []
+        val_utilities = []
         model.train()
         optimizer.zero_grad()
 
@@ -292,4 +320,34 @@ if __name__ == '__main__':
                 # Set model back to training mode
                 model.train()
             batch_counter += 1
+        
+        train_losses_epoch.append(np.mean(train_losses))
+        val_losses_epoch.append(np.mean(val_losses))
+        train_utilities_epoch.append(np.mean(train_utilities))
+        val_utilities_epoch.append(np.mean(val_utilities))
+    
+    fig, axes = plt.subplots(1, 2, figsize=(14, 6))
+    epochs_range = range(0, epochs + 1)
+
+    axes[0].plot(epochs_range, train_losses_epoch, label='Train Loss', marker='o', linestyle='-')
+    axes[0].plot(epochs_range, val_losses_epoch, label='Validation Loss', marker='x', linestyle='--')
+    axes[0].set_xlabel('Epochs'); axes[0].set_ylabel('Loss'); axes[0].set_title('Loss')
+    axes[0].legend(); axes[0].grid(True)
+
+    axes[1].plot(epochs_range, train_utilities_epoch, label='Train Utility', marker='o', linestyle='-')
+    axes[1].plot(epochs_range, val_utilities_epoch, label='Validation Utility', marker='x', linestyle='--')
+    axes[1].set_xlabel('Epochs'); axes[1].set_ylabel('Utility'); axes[1].set_title('Utility')
+    axes[1].legend(); axes[1].grid(True)
+    axes[1].ticklabel_format(style='sci', axis='y', scilimits=(0,0))
+
+    
+
+    # Add baseline to the plot
+    axes[1].axhline(y=tput_optimal_mean, color='r', linestyle='--', label='Optimal Throughput')
+    axes[1].legend()
+
+    plt.tight_layout()
+    plt.savefig('train_fig_final.png')
+    print(f"Training curves plot saved to {'train_fig_final.png'}")
+    plt.show()
 
